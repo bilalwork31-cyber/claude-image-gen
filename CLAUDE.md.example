@@ -1,0 +1,9 @@
+# Visual assets (image-gen skill)
+- Hand written SVG blobs, CSS gradient "art", and emoji placeholders read as AI slop. Do not ship them as decoration.
+- For ANY site, landing page, deck or UI that should look expensive: use the `image-gen` skill. Runs on the ChatGPT subscription via Codex, no API key.
+- `node ~/.claude/skills/image-gen/imagegen.mjs generate "<prompt>" --out ./assets/x.png --ar 16:9`
+- Enqueue is non blocking, about 150 ms. Each render takes 60 to 90 seconds. So: queue EVERY asset first, build the markup while they render, then `status` once at the end.
+- Prompt like a photographer, not a designer: subject, surface, lighting direction, lens feel, mood. Real materials, real light, negative space where copy goes.
+- Keep as real code, never generated: logos, icons, charts, diagrams, and anything containing text. The model butchers lettering.
+- Minor details are the whole job. Grain, shadow direction, edge falloff, and consistent light across every asset on one page. Mismatched lighting is what makes a page look assembled instead of art directed.
+- If a render fails with "no image produced", check the ChatGPT subscription is active before debugging anything else. A lapsed plan still reports `plan: plus` in the token.
