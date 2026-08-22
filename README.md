@@ -6,7 +6,7 @@ Claude is good at markup and bad at decoration. Left alone it reaches for hand w
 
 ## What it does
 
-- Generates photographic assets: hero backgrounds, product shots, textures, backdrops.
+- Generates real assets: hero backgrounds, product shots, logos, wordmarks, icons, buttons, badges, infographics, textures, transparent cutouts.
 - Queues them. Enqueue returns in about 150 ms, so Claude keeps writing code while images render in a detached worker.
 - Runs through the Codex CLI built in image tool, so billing rides your ChatGPT plan. There is no API key to create, store or leak.
 
@@ -57,6 +57,7 @@ node ~/.claude/skills/image-gen/imagegen.mjs status
 | `--out` | output path | `./assets/<id>.png` |
 | `--ar` | `1:1` `3:2` `2:3` `4:3` `3:4` `16:9` `9:16` `21:9` | `16:9` |
 | `--quality` | `low` `medium` `high` | `high` |
+| `--bg` | `auto` `transparent` `opaque` | `auto` |
 
 `status` reports the pending count plus every job's state, path, byte size and error.
 
@@ -74,9 +75,24 @@ If renders fail with `no image produced`, **check that the ChatGPT subscription 
 
 A lapsed plan still hands out a token claiming `plan: plus`, and every local check keeps reporting healthy. `codex features list` shows `image_generation stable true`, the session feature list includes `ImageGeneration`, `codex doctor` reports auth fine. The tool is withheld server side and nothing local reveals it. Finding this cost an entire evening.
 
-## What it will not do
+## What it is good at
 
-Logos, icons, charts, diagrams, and anything containing text. Image models still butcher lettering. Those stay as real SVG and real type. The skill instructs Claude accordingly.
+The backend is `gpt-image-2`, a current generation model. It renders legible text, so it handles work that older image models could not:
+
+- Logos and wordmarks, icon sets, badges, buttons and UI chrome
+- Infographics, diagrams and charts with real labels
+- Photorealistic product shots, hero backgrounds, textures, abstract art
+- Compositing and identity consistent edits across a set
+
+Pass `--bg transparent` for anything that has to sit on an arbitrary background. The alpha channel is preserved.
+
+```bash
+node ~/.claude/skills/image-gen/imagegen.mjs generate \
+  'minimal wordmark reading "ROAST" in a bold geometric sans, matte charcoal, crisp edges' \
+  --out ./assets/logo.png --ar 1:1 --bg transparent
+```
+
+Spell out any text that must appear, in quotes, exactly as it should read. Keep it short. Reach for hand written SVG only when an asset must scale infinitely or be recoloured by CSS at runtime.
 
 ## License
 

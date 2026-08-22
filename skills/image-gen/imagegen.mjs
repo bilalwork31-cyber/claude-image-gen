@@ -37,11 +37,28 @@ function codexBin() {
 
 function ensureDirs() { for (const d of [ROOT, QUEUE, DONE]) fs.mkdirSync(d, { recursive: true }); }
 
+// PNG IHDR colour type: 4 is greyscale+alpha, 6 is RGBA.
+function hasAlpha(file) {
+  const fd = fs.openSync(file, 'r');
+  const head = Buffer.alloc(26);
+  fs.readSync(fd, head, 0, 26, 0);
+  fs.closeSync(fd);
+  if (head.subarray(1, 4).toString() !== 'PNG') return false;
+  return head[25] === 6 || head[25] === 4;
+}
+
 function render(job) {
+  const bgLine =
+    job.bg === 'transparent'
+      ? 'This is a TRANSPARENT BACKGROUND request. Ask the built-in image_gen tool for a transparent background and preserve the generated alpha. The saved PNG must be RGBA, never flattened onto a solid colour.\n'
+      : job.bg === 'opaque'
+        ? 'Background: opaque.\n'
+        : '';
   const prompt =
     `Use the imagegen skill to generate exactly one image.\n` +
     `Subject: ${job.prompt}\n` +
     `Aspect ratio: ${job.aspect}. Quality: ${job.quality}.\n` +
+    bgLine +
     `Copy the finished image to this exact path, overwriting if present: ${job.out}\n` +
     `Do not write any code and do not use the CLI fallback. Reply with only the final path.`;
 
@@ -56,6 +73,9 @@ function render(job) {
   if (!fs.existsSync(job.out)) {
     const tail = String(res.stdout || res.stderr || '').trim().slice(-400);
     throw new Error(`no image produced: ${tail}`);
+  }
+  if (job.bg === 'transparent' && !hasAlpha(job.out)) {
+    throw new Error('transparent background requested but the PNG has no alpha channel');
   }
   return fs.statSync(job.out).size;
 }
@@ -96,6 +116,7 @@ function enqueue(args) {
     out: path.resolve(args.out || path.join(process.cwd(), 'assets', `${id}.png`)),
     aspect: args.ar || '16:9',
     quality: args.quality || 'high',
+    bg: args.bg || 'auto',
     state: 'queued',
     queued: new Date().toISOString(),
   };
@@ -116,7 +137,7 @@ function status(args) {
   ].sort((a, b) => a.queued.localeCompare(b.queued));
   const rows = one ? all.filter(j => j.id === one) : all;
   const pending = all.filter(j => j.state === 'queued').length;
-  console.log(JSON.stringify({ pending, jobs: rows.map(j => ({ id: j.id, state: j.state, out: j.out, bytes: j.bytes, error: j.error })) }, null, 2));
+  console.log(JSON.stringify({ pending, jobs: rows.map(j => ({ id: j.id, state: j.state, out: j.out, bytes: j.bytes, bg: j.bg, error: j.error })) }, null, 2));
 }
 
 function parse(argv) {
@@ -136,7 +157,7 @@ try {
   else if (cmd === 'status') status(args);
   else if (cmd === 'worker') await worker();
   else {
-    console.log('Usage:\n  imagegen.mjs generate "<prompt>" [--out PATH] [--ar 16:9] [--quality low|medium|high]\n  imagegen.mjs status [id]');
+    console.log('Usage:\n  imagegen.mjs generate "<prompt>" [--out PATH] [--ar 16:9] [--quality low|medium|high] [--bg auto|transparent|opaque]\n  imagegen.mjs status [id]');
     process.exit(1);
   }
 } catch (e) { console.error(String(e.message)); process.exit(1); }
