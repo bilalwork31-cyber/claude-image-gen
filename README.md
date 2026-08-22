@@ -27,14 +27,14 @@ codex exec "say ok"
 macOS and Linux:
 
 ```bash
-git clone https://github.com/YOUR_USER/claude-image-gen
+git clone https://github.com/bilalwork31-cyber/claude-image-gen
 cd claude-image-gen && ./install.sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-git clone https://github.com/YOUR_USER/claude-image-gen
+git clone https://github.com/bilalwork31-cyber/claude-image-gen
 cd claude-image-gen; .\install.ps1
 ```
 
