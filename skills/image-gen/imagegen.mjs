@@ -8,7 +8,11 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 
-const ROOT = path.join(os.homedir(), '.claude', 'imagegen');
+// State is per project (keyed by the invoking cwd), so status only shows this
+// project's jobs and a worker never drains or retries another project's queue.
+const PROJECT = path.resolve(process.env.IMAGEGEN_ROOT || process.cwd());
+const SLUG = PROJECT.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+const ROOT = path.join(os.homedir(), '.claude', 'imagegen', 'projects', SLUG);
 const QUEUE = path.join(ROOT, 'queue');
 const DONE = path.join(ROOT, 'done');
 const LOCK = path.join(ROOT, 'worker.lock');
@@ -37,6 +41,17 @@ function codexBin() {
 
 function ensureDirs() { for (const d of [ROOT, QUEUE, DONE]) fs.mkdirSync(d, { recursive: true }); }
 
+// A worker killed with its session leaves the lock behind; detect a dead pid so
+// the next enqueue in this project can reclaim its queue.
+function lockAlive() {
+  try {
+    const pid = Number(fs.readFileSync(LOCK, 'utf8'));
+    if (!pid) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch { return false; }
+}
+
 // PNG IHDR colour type: 4 is greyscale+alpha, 6 is RGBA.
 function hasAlpha(file) {
   const fd = fs.openSync(file, 'r');
@@ -54,23 +69,43 @@ function render(job) {
       : job.bg === 'opaque'
         ? 'Background: opaque.\n'
         : '';
+  const refs = job.refs || [];
+  const refLine = refs.length
+    ? `${refs.length} reference image${refs.length > 1 ? 's are' : ' is'} attached to this prompt. ` +
+      `Pass ${refs.length > 1 ? 'them' : 'it'} to the built-in image_gen tool as input image${refs.length > 1 ? 's' : ''} so the result stays faithful to the attached artwork. ` +
+      `Reproduce the attached shapes, proportions and geometry exactly; do not redraw, restyle or reinterpret them. Only the material, lighting and scene described below may change.\n`
+    : '';
   const prompt =
     `Use the imagegen skill to generate exactly one image.\n` +
+    refLine +
     `Subject: ${job.prompt}\n` +
     `Aspect ratio: ${job.aspect}. Quality: ${job.quality}.\n` +
     bgLine +
     `Copy the finished image to this exact path, overwriting if present: ${job.out}\n` +
     `Do not write any code and do not use the CLI fallback. Reply with only the final path.`;
 
+  for (const r of refs) {
+    if (!fs.existsSync(r)) throw new Error(`reference image not found: ${r}`);
+  }
+
   fs.mkdirSync(path.dirname(job.out), { recursive: true });
-  const res = spawnSync(codexBin(), ['exec', '--dangerously-bypass-approvals-and-sandbox', prompt], {
+  // A stale file at this path would make a failed render look successful, so
+  // remember what was there and require the render to actually replace it.
+  const before = fs.existsSync(job.out) ? fs.statSync(job.out).mtimeMs : null;
+  const args = ['exec', '--dangerously-bypass-approvals-and-sandbox'];
+  for (const r of refs) args.push('--image', r);
+  // --image is variadic, so a positional prompt after it is swallowed as another
+  // file. Feed the prompt over stdin instead, which codex reads when no
+  // positional prompt is present.
+  const res = spawnSync(codexBin(), args, {
     cwd: path.dirname(job.out),
     encoding: 'utf8',
+    input: prompt,
     timeout: 15 * 60 * 1000,
     windowsHide: true,
   });
   if (res.error) throw new Error(res.error.message);
-  if (!fs.existsSync(job.out)) {
+  if (!fs.existsSync(job.out) || fs.statSync(job.out).mtimeMs === before) {
     const tail = String(res.stdout || res.stderr || '').trim().slice(-400);
     throw new Error(`no image produced: ${tail}`);
   }
@@ -117,12 +152,19 @@ function enqueue(args) {
     aspect: args.ar || '16:9',
     quality: args.quality || 'high',
     bg: args.bg || 'auto',
+    refs: (args.ref || []).map(r => path.resolve(r)),
     state: 'queued',
     queued: new Date().toISOString(),
   };
   fs.writeFileSync(path.join(QUEUE, `${id}.json`), JSON.stringify(job, null, 2));
-  if (!fs.existsSync(LOCK)) {
-    spawn(process.execPath, [import.meta.filename, 'worker'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  if (!lockAlive()) {
+    fs.rmSync(LOCK, { force: true });
+    spawn(process.execPath, [import.meta.filename, 'worker'], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: { ...process.env, IMAGEGEN_ROOT: PROJECT },
+    }).unref();
   }
   console.log(JSON.stringify({ id, out: job.out, state: 'queued' }));
 }
@@ -144,7 +186,8 @@ function parse(argv) {
   const out = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a.startsWith('--')) out[a.slice(2)] = argv[++i];
+    if (a === '--ref') (out.ref ||= []).push(argv[++i]);
+    else if (a.startsWith('--')) out[a.slice(2)] = argv[++i];
     else out._.push(a);
   }
   return out;
@@ -157,7 +200,7 @@ try {
   else if (cmd === 'status') status(args);
   else if (cmd === 'worker') await worker();
   else {
-    console.log('Usage:\n  imagegen.mjs generate "<prompt>" [--out PATH] [--ar 16:9] [--quality low|medium|high] [--bg auto|transparent|opaque]\n  imagegen.mjs status [id]');
+    console.log('Usage:\n  imagegen.mjs generate "<prompt>" [--out PATH] [--ar 16:9] [--quality low|medium|high] [--bg auto|transparent|opaque] [--ref FILE]...\n  imagegen.mjs status [id]');
     process.exit(1);
   }
 } catch (e) { console.error(String(e.message)); process.exit(1); }

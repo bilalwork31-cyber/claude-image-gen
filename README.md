@@ -58,6 +58,7 @@ node ~/.claude/skills/image-gen/imagegen.mjs status
 | `--ar` | `1:1` `3:2` `2:3` `4:3` `3:4` `16:9` `9:16` `21:9` | `16:9` |
 | `--quality` | `low` `medium` `high` | `high` |
 | `--bg` | `auto` `transparent` `opaque` | `auto` |
+| `--ref` | path to a reference image, repeatable | none |
 
 `status` reports the pending count plus every job's state, path, byte size and error.
 
@@ -85,6 +86,22 @@ The backend is `gpt-image-2`, a current generation model. It renders legible tex
 - Compositing and identity consistent edits across a set
 
 Pass `--bg transparent` for anything that has to sit on an arbitrary background. The alpha channel is preserved.
+
+## Reference images
+
+Pass `--ref` to attach artwork you already own, so the render stays faithful to it instead of inventing its own version. Use it for anything carrying brand identity: a logo rendered as a physical object, an icon set that has to match an existing mark, or a second asset that must share a subject with the first. Repeat the flag for multiple references.
+
+```bash
+node ~/.claude/skills/image-gen/imagegen.mjs generate "milled from matte black aluminium, raking light from the left"   --ref ./assets/logo.png --out ./assets/logo-3d.png --ar 1:1 --bg transparent
+```
+
+Describe only the material, lighting and scene. The attached artwork supplies the shape, so do not re describe the geometry.
+
+## Per project queues
+
+Queue state lives under `~/.claude/imagegen/projects/<project>/`, keyed on the directory you run the command from. `status` therefore shows only the jobs for the project you are in, and a worker never drains or retries another project's queue. A worker killed with its session leaves a lock behind; the next enqueue detects the dead process and reclaims the queue.
+
+A render is only counted as successful when the output file is actually written or replaced, so a failed job can never be masked by an older file sitting at the same path.
 
 ```bash
 node ~/.claude/skills/image-gen/imagegen.mjs generate \

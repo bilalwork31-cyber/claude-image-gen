@@ -21,6 +21,16 @@ Returns `{"id":"...","out":"...","state":"queued"}` in about 150 ms. Fire off ev
 | `--ar` | `1:1` `3:2` `2:3` `4:3` `3:4` `16:9` `9:16` `21:9` | `16:9` |
 | `--quality` | `low` `medium` `high` | `high` |
 | `--bg` | `auto` `transparent` `opaque` | `auto` |
+| `--ref` | path to a reference image, repeatable | none |
+
+`--ref` attaches a real image to the request, so the render stays faithful to artwork you already own instead of inventing its own version. Use it for anything carrying brand identity: a logo rendered as a physical object, an icon set that must match an existing mark, product shots of a real device, or a second asset that has to share a subject with the first. Repeat the flag for multiple references.
+
+```bash
+node ~/.claude/skills/image-gen/imagegen.mjs generate "the logo milled from matte black aluminium, raking light" \
+  --ref ./assets/logo.png --out ./assets/logo-3d.png --ar 1:1 --bg transparent
+```
+
+Describe only the material, lighting and scene in the prompt. The attached artwork supplies the shape, so do not re describe the geometry and do not ask for changes to it.
 
 Use `--bg transparent` for logos, icons, badges, buttons, product cutouts, mascots, stickers: anything that must sit on an arbitrary background. The alpha channel is preserved.
 
