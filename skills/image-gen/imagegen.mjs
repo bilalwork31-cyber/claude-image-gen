@@ -1,7 +1,15 @@
 #!/usr/bin/env node
-// Queued image generation for Claude Code, backed by the Codex built-in imagegen
-// tool. Enqueue returns instantly; a detached worker renders in the background so
-// the agent never blocks on a render. Uses the ChatGPT subscription, no API key.
+// Queued image generation for Claude Code. Enqueue returns instantly; a detached
+// worker renders in the background so the agent never blocks on a render.
+//
+// Two providers, both driving a CLI that already holds its own subscription, so
+// there is no API key anywhere in here:
+//   codex   gpt-image-2 through the Codex CLI, on the ChatGPT subscription
+//   gemini  Imagen through the Antigravity CLI (agy), on the Google account
+//
+// --provider is required on every enqueue. There is deliberately no default: the
+// two render differently enough that picking one silently is picking wrong half
+// the time, and one of them is usually down. The caller asks the user first.
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -32,12 +40,24 @@ const CODEX_CANDIDATES = [
   'codex',
 ].filter(Boolean);
 
-function codexBin() {
-  for (const c of CODEX_CANDIDATES) {
-    if (c === 'codex' || fs.existsSync(c)) return c;
+const AGY_CANDIDATES = [
+  process.env.AGY_BIN,
+  path.join(os.homedir(), 'AppData', 'Local', 'agy', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy'),
+  path.join(os.homedir(), '.local', 'bin', 'agy'),
+  'agy',
+].filter(Boolean);
+
+const PROVIDERS = ['codex', 'gemini'];
+
+function findBin(candidates, name, envVar) {
+  for (const c of candidates) {
+    if (c === name || fs.existsSync(c)) return c;
   }
-  throw new Error('Codex CLI not found. Set CODEX_BIN to its full path.');
+  throw new Error(`${name} CLI not found. Set ${envVar} to its full path.`);
 }
+
+function codexBin() { return findBin(CODEX_CANDIDATES, 'codex', 'CODEX_BIN'); }
+function agyBin() { return findBin(AGY_CANDIDATES, 'agy', 'AGY_BIN'); }
 
 function ensureDirs() { for (const d of [ROOT, QUEUE, DONE]) fs.mkdirSync(d, { recursive: true }); }
 
@@ -75,14 +95,12 @@ function render(job) {
       `Pass ${refs.length > 1 ? 'them' : 'it'} to the built-in image_gen tool as input image${refs.length > 1 ? 's' : ''} so the result stays faithful to the attached artwork. ` +
       `Reproduce the attached shapes, proportions and geometry exactly; do not redraw, restyle or reinterpret them. Only the material, lighting and scene described below may change.\n`
     : '';
-  const prompt =
-    `Use the imagegen skill to generate exactly one image.\n` +
+  const body =
     refLine +
     `Subject: ${job.prompt}\n` +
     `Aspect ratio: ${job.aspect}. Quality: ${job.quality}.\n` +
     bgLine +
-    `Copy the finished image to this exact path, overwriting if present: ${job.out}\n` +
-    `Do not write any code and do not use the CLI fallback. Reply with only the final path.`;
+    `Copy the finished image to this exact path, overwriting if present: ${job.out}\n`;
 
   for (const r of refs) {
     if (!fs.existsSync(r)) throw new Error(`reference image not found: ${r}`);
@@ -92,18 +110,8 @@ function render(job) {
   // A stale file at this path would make a failed render look successful, so
   // remember what was there and require the render to actually replace it.
   const before = fs.existsSync(job.out) ? fs.statSync(job.out).mtimeMs : null;
-  const args = ['exec', '--dangerously-bypass-approvals-and-sandbox'];
-  for (const r of refs) args.push('--image', r);
-  // --image is variadic, so a positional prompt after it is swallowed as another
-  // file. Feed the prompt over stdin instead, which codex reads when no
-  // positional prompt is present.
-  const res = spawnSync(codexBin(), args, {
-    cwd: path.dirname(job.out),
-    encoding: 'utf8',
-    input: prompt,
-    timeout: 15 * 60 * 1000,
-    windowsHide: true,
-  });
+
+  const res = job.provider === 'gemini' ? runAgy(job, body) : runCodex(job, body, refs);
   if (res.error) throw new Error(res.error.message);
   if (!fs.existsSync(job.out) || fs.statSync(job.out).mtimeMs === before) {
     const tail = String(res.stdout || res.stderr || '').trim().slice(-400);
@@ -113,6 +121,39 @@ function render(job) {
     throw new Error('transparent background requested but the PNG has no alpha channel');
   }
   return fs.statSync(job.out).size;
+}
+
+function runCodex(job, body, refs) {
+  const prompt =
+    `Use the imagegen skill to generate exactly one image.\n` + body +
+    `Do not write any code and do not use the CLI fallback. Reply with only the final path.`;
+  const args = ['exec', '--dangerously-bypass-approvals-and-sandbox'];
+  for (const r of refs) args.push('--image', r);
+  // --image is variadic, so a positional prompt after it is swallowed as another
+  // file. Feed the prompt over stdin instead, which codex reads when no
+  // positional prompt is present.
+  return spawnSync(codexBin(), args, {
+    cwd: path.dirname(job.out),
+    encoding: 'utf8',
+    input: prompt,
+    timeout: 15 * 60 * 1000,
+    windowsHide: true,
+  });
+}
+
+// agy takes its prompt as a positional argument after --print and has no flag
+// for attaching an input image, so a reference is refused at enqueue rather than
+// quietly dropped here.
+function runAgy(job, body) {
+  const prompt =
+    `Use your built in image generation tool to generate exactly one image.\n` + body +
+    `Do not write any code and do not call an external API. Reply with only the final path.`;
+  return spawnSync(agyBin(), ['-p', prompt, '--dangerously-skip-permissions'], {
+    cwd: path.dirname(job.out),
+    encoding: 'utf8',
+    timeout: 15 * 60 * 1000,
+    windowsHide: true,
+  });
 }
 
 async function worker() {
@@ -144,9 +185,20 @@ function enqueue(args) {
   ensureDirs();
   const prompt = args._.join(' ').trim();
   if (!prompt) throw new Error('Prompt required.');
+  // No default. Asking the user which provider is the point of the flag.
+  if (!args.provider) {
+    throw new Error(`--provider is required: ${PROVIDERS.join(' or ')}. Ask the user which one before queuing.`);
+  }
+  if (!PROVIDERS.includes(args.provider)) {
+    throw new Error(`unknown provider "${args.provider}". Use ${PROVIDERS.join(' or ')}.`);
+  }
+  if (args.provider === 'gemini' && (args.ref || []).length) {
+    throw new Error('--ref is codex only: agy has no way to attach an input image. Use --provider codex for reference work.');
+  }
   const id = new Date().toISOString().replace(/[:.]/g, '-') + '-' + crypto.randomBytes(3).toString('hex');
   const job = {
     id,
+    provider: args.provider,
     prompt,
     out: path.resolve(args.out || path.join(process.cwd(), 'assets', `${id}.png`)),
     aspect: args.ar || '16:9',
@@ -179,7 +231,7 @@ function status(args) {
   ].sort((a, b) => a.queued.localeCompare(b.queued));
   const rows = one ? all.filter(j => j.id === one) : all;
   const pending = all.filter(j => j.state === 'queued').length;
-  console.log(JSON.stringify({ pending, jobs: rows.map(j => ({ id: j.id, state: j.state, out: j.out, bytes: j.bytes, bg: j.bg, error: j.error })) }, null, 2));
+  console.log(JSON.stringify({ pending, jobs: rows.map(j => ({ id: j.id, provider: j.provider || 'codex', state: j.state, out: j.out, bytes: j.bytes, bg: j.bg, error: j.error })) }, null, 2));
 }
 
 function parse(argv) {
@@ -200,7 +252,7 @@ try {
   else if (cmd === 'status') status(args);
   else if (cmd === 'worker') await worker();
   else {
-    console.log('Usage:\n  imagegen.mjs generate "<prompt>" [--out PATH] [--ar 16:9] [--quality low|medium|high] [--bg auto|transparent|opaque] [--ref FILE]...\n  imagegen.mjs status [id]');
+    console.log('Usage:\n  imagegen.mjs generate "<prompt>" --provider codex|gemini [--out PATH] [--ar 16:9] [--quality low|medium|high] [--bg auto|transparent|opaque] [--ref FILE]...\n  imagegen.mjs status [id]\n\n--provider is required and has no default. Ask the user which one before queuing.\n  codex   gpt-image-2, ChatGPT subscription, supports --ref and transparency\n  gemini  Imagen via the agy CLI, Google account, no --ref');
     process.exit(1);
   }
 } catch (e) { console.error(String(e.message)); process.exit(1); }

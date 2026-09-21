@@ -5,18 +5,34 @@ description: Generate real image assets (hero backgrounds, product shots, logos,
 
 # Image generation
 
-Queued renderer backed by the Codex built in imagegen tool (`gpt-image-2`) on the ChatGPT subscription. No API key. Enqueue returns immediately, a detached worker renders, you keep working.
+Queued renderer with two providers, each driving a CLI that already holds its own subscription. No API key anywhere. Enqueue returns immediately, a detached worker renders, you keep working.
+
+## Providers
+
+| `--provider` | Model | Runs through | Subscription | `--ref` | Transparency |
+|---|---|---|---|---|---|
+| `codex` | `gpt-image-2` | Codex CLI | ChatGPT | yes | yes |
+| `gemini` | Imagen | Antigravity CLI (`agy`) | Google account | no | unverified |
+
+**`--provider` is required and has no default. Ask the user which one before queuing.** The tool refuses the job otherwise, on purpose: the two render differently, and when one provider's subscription lapses its tool vanishes server side while the CLI still reports a healthy plan. Silently picking one is picking wrong half the time.
+
+One line is enough: "codex or gemini for these?" Do not deliberate about it, and do not decide for them.
+
+Once they answer, that choice holds for the rest of the batch and the rest of the session unless they say otherwise. Ask again for a new batch, not for every asset.
+
+If a provider fails on every job in a batch, say which one failed and what the error was, then offer the other one. Do not switch providers on your own: the user chose for a reason, and a silent swap hides an expired subscription instead of surfacing it.
 
 ## Generate
 
 ```bash
-node ~/.claude/skills/image-gen/imagegen.mjs generate "PROMPT" --out ./public/hero.png --ar 16:9
+node ~/.claude/skills/image-gen/imagegen.mjs generate "PROMPT" --provider codex --out ./public/hero.png --ar 16:9
 ```
 
 Returns `{"id":"...","out":"...","state":"queued"}` in about 150 ms. Fire off every asset a page needs in one batch, then continue building the markup.
 
 | Flag | Values | Default |
 |---|---|---|
+| `--provider` | `codex` `gemini` | **required, ask the user** |
 | `--out` | output path | `./assets/<id>.png` |
 | `--ar` | `1:1` `3:2` `2:3` `4:3` `3:4` `16:9` `9:16` `21:9` | `16:9` |
 | `--quality` | `low` `medium` `high` | `high` |
@@ -27,7 +43,7 @@ Returns `{"id":"...","out":"...","state":"queued"}` in about 150 ms. Fire off ev
 
 ```bash
 node ~/.claude/skills/image-gen/imagegen.mjs generate "the logo milled from matte black aluminium, raking light" \
-  --ref ./assets/logo.png --out ./assets/logo-3d.png --ar 1:1 --bg transparent
+  --provider codex --ref ./assets/logo.png --out ./assets/logo-3d.png --ar 1:1 --bg transparent
 ```
 
 Describe only the material, lighting and scene in the prompt. The attached artwork supplies the shape, so do not re describe the geometry and do not ask for changes to it.
@@ -40,11 +56,11 @@ Use `--bg transparent` for logos, icons, badges, buttons, product cutouts, masco
 node ~/.claude/skills/image-gen/imagegen.mjs status
 ```
 
-Reports `pending` count plus each job's state, path, background mode and byte size. Poll near the end of the task, not after every enqueue.
+Reports `pending` count plus each job's provider, state, path, background mode and byte size. Poll near the end of the task, not after every enqueue.
 
 ## What it is good at
 
-`gpt-image-2` is a current generation model. It renders legible text, so it handles these properly:
+Both are current generation models that render legible text, so they handle these properly:
 
 - Logos and wordmarks, icons and icon sets, badges, buttons and UI chrome
 - Infographics, diagrams, charts with real labels, annotated illustrations
@@ -55,17 +71,21 @@ Do not refuse a request because it contains text or is "a logo". Generate it.
 
 ## Rules
 
-- Batch first. Enqueue every asset up front, write the HTML and CSS while they render, then `status` once at the end.
+- Ask which provider once, then batch. Enqueue every asset up front, write the HTML and CSS while they render, then `status` once at the end.
 - Never block waiting on a render. If jobs are still pending when the code is done, say so and check again.
 - Spell out any text that must appear, in quotes, exactly as it should read. Keep it short. Long paragraphs still degrade.
 - Prompt like a photographer or an art director: subject, surface, lighting direction, lens feel, palette, mood. Real materials, real light, negative space where copy goes.
 - Minor details are the whole job. Grain, shadow direction, edge falloff, and consistent light across every asset on one page. Mismatched lighting is what makes a page look assembled instead of art directed.
 - Prefer real SVG only when the asset must scale infinitely or be recoloured by CSS at runtime. Otherwise generate it.
-- A failed job records its error in `status`. Report the error, do not silently retry more than once.
+- A failed job records its error in `status`. Report the error and name the provider, do not silently retry more than once, and never quietly switch providers.
 - Each render takes roughly 60 to 90 seconds, so batching matters.
 
 ## Requirements
 
-Codex CLI, logged in with an ACTIVE ChatGPT paid subscription. The `image_gen` tool is withheld server side when a subscription lapses, even though the stored token still claims `plan: plus`. If renders start failing with "no image produced", check the subscription before debugging anything else.
+**codex** Codex CLI, logged in with an ACTIVE ChatGPT paid subscription. The `image_gen` tool is withheld server side when a subscription lapses, even though the stored token still claims `plan: plus`.
 
-Binary is located automatically. Override with `CODEX_BIN` if it moves.
+**gemini** Antigravity CLI (`agy`), signed in to a Google account with image generation available.
+
+Either way, if renders start failing with "no image produced", check that provider's subscription before debugging anything else. Then offer the user the other provider.
+
+Both binaries are located automatically. Override with `CODEX_BIN` or `AGY_BIN` if one moves.

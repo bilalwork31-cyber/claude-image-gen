@@ -1,6 +1,6 @@
 # claude-image-gen
 
-Real image assets inside Claude Code, generated on your existing ChatGPT subscription. No API key.
+Real image assets inside Claude Code, generated on a subscription you already pay for. Two providers, ChatGPT or Google. No API key.
 
 Claude is good at markup and bad at decoration. Left alone it reaches for hand written SVG blobs, CSS gradient "art" and emoji placeholders, and the page ends up looking like a template. This skill gives it a camera instead.
 
@@ -8,18 +8,25 @@ Claude is good at markup and bad at decoration. Left alone it reaches for hand w
 
 - Generates real assets: hero backgrounds, product shots, logos, wordmarks, icons, buttons, badges, infographics, textures, transparent cutouts.
 - Queues them. Enqueue returns in about 150 ms, so Claude keeps writing code while images render in a detached worker.
-- Runs through the Codex CLI built in image tool, so billing rides your ChatGPT plan. There is no API key to create, store or leak.
+- Runs through a CLI you are already signed in to, so billing rides that plan. There is no API key to create, store or leak.
+- Two providers behind one flag: `--provider codex` for `gpt-image-2` on your ChatGPT plan, `--provider gemini` for Imagen through the Antigravity CLI on your Google account. Claude asks you which one before it queues anything.
 
 ## Requirements
 
 - Node.js 18 or newer
-- [Codex CLI](https://github.com/openai/codex), signed in with an **active paid ChatGPT plan**
 - Claude Code
+- At least one provider CLI, signed in:
 
-Verify Codex first. If this prints a path, you are ready:
+| `--provider` | CLI | Account needed |
+|---|---|---|
+| `codex` | [Codex CLI](https://github.com/openai/codex) | active paid ChatGPT plan |
+| `gemini` | Antigravity CLI (`agy`) | Google account with image generation |
+
+Verify whichever you plan to use. If these answer, you are ready:
 
 ```bash
 codex exec "say ok"
+agy -p "say ok"
 ```
 
 ## Install
@@ -47,13 +54,14 @@ Just ask. "Build me a landing page for a coffee roaster" is enough once the skil
 Manually, if you want:
 
 ```bash
-node ~/.claude/skills/image-gen/imagegen.mjs generate "matte black ceramic cup on pale concrete, soft window light from the left, high end product photography" --out ./assets/hero.png --ar 16:9
+node ~/.claude/skills/image-gen/imagegen.mjs generate "matte black ceramic cup on pale concrete, soft window light from the left, high end product photography" --provider codex --out ./assets/hero.png --ar 16:9
 
 node ~/.claude/skills/image-gen/imagegen.mjs status
 ```
 
 | Flag | Values | Default |
 |---|---|---|
+| `--provider` | `codex` `gemini` | **required, no default** |
 | `--out` | output path | `./assets/<id>.png` |
 | `--ar` | `1:1` `3:2` `2:3` `4:3` `3:4` `16:9` `9:16` `21:9` | `16:9` |
 | `--quality` | `low` `medium` `high` | `high` |
@@ -72,13 +80,13 @@ Each render takes 60 to 90 seconds. Doing that inline would stall the session on
 
 ## Known gotcha, worth reading
 
-If renders fail with `no image produced`, **check that the ChatGPT subscription is actually active.**
+If renders fail with `no image produced`, **check that provider's subscription is actually active**, then try the other provider.
 
 A lapsed plan still hands out a token claiming `plan: plus`, and every local check keeps reporting healthy. `codex features list` shows `image_generation stable true`, the session feature list includes `ImageGeneration`, `codex doctor` reports auth fine. The tool is withheld server side and nothing local reveals it. Finding this cost an entire evening.
 
 ## What it is good at
 
-The backend is `gpt-image-2`, a current generation model. It renders legible text, so it handles work that older image models could not:
+Both backends are current generation models. They render legible text, so they handle work that older image models could not:
 
 - Logos and wordmarks, icon sets, badges, buttons and UI chrome
 - Infographics, diagrams and charts with real labels
@@ -92,7 +100,7 @@ Pass `--bg transparent` for anything that has to sit on an arbitrary background.
 Pass `--ref` to attach artwork you already own, so the render stays faithful to it instead of inventing its own version. Use it for anything carrying brand identity: a logo rendered as a physical object, an icon set that has to match an existing mark, or a second asset that must share a subject with the first. Repeat the flag for multiple references.
 
 ```bash
-node ~/.claude/skills/image-gen/imagegen.mjs generate "milled from matte black aluminium, raking light from the left"   --ref ./assets/logo.png --out ./assets/logo-3d.png --ar 1:1 --bg transparent
+node ~/.claude/skills/image-gen/imagegen.mjs generate "milled from matte black aluminium, raking light from the left"   --provider codex --ref ./assets/logo.png --out ./assets/logo-3d.png --ar 1:1 --bg transparent
 ```
 
 Describe only the material, lighting and scene. The attached artwork supplies the shape, so do not re describe the geometry.
