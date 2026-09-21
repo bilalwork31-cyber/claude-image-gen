@@ -80,7 +80,13 @@ Each render takes 60 to 90 seconds. Doing that inline would stall the session on
 
 ## Known gotcha, worth reading
 
-If renders fail with `no image produced`, **check that provider's subscription is actually active**, then try the other provider.
+If renders fail with `no image produced`, read the rest of the message. The two providers fail differently:
+
+**codex** `the built-in image_gen tool is not available in this session` means **the ChatGPT plan is not active.**
+
+**gemini** `429 RESOURCE_EXHAUSTED` means the daily image quota is spent. The error states the reset window, usually a few hours. Waiting is the fix. Retrying just burns the rest of the batch against the same wall.
+
+Either way, the other provider is the immediate way forward.
 
 A lapsed plan still hands out a token claiming `plan: plus`, and every local check keeps reporting healthy. `codex features list` shows `image_generation stable true`, the session feature list includes `ImageGeneration`, `codex doctor` reports auth fine. The tool is withheld server side and nothing local reveals it. Finding this cost an entire evening.
 

@@ -86,6 +86,13 @@ Do not refuse a request because it contains text or is "a logo". Generate it.
 
 **gemini** Antigravity CLI (`agy`), signed in to a Google account with image generation available.
 
-Either way, if renders start failing with "no image produced", check that provider's subscription before debugging anything else. Then offer the user the other provider.
+Each fails in its own way, and neither failure is a bug in this tool:
+
+| Provider | Error inside `no image produced` | What it means |
+|---|---|---|
+| codex | `image_gen tool is not available in this session` | the ChatGPT plan lapsed. Local checks all still report healthy. |
+| gemini | `429 RESOURCE_EXHAUSTED`, with a reset window | daily image quota spent. The message says how long until it resets. |
+
+Report the error verbatim, say which provider, and tell the user the wait if there is one. Then offer the other provider and let them choose. Do not retry a quota error: the queue will burn through every job in the batch against the same wall and hand back the same message each time.
 
 Both binaries are located automatically. Override with `CODEX_BIN` or `AGY_BIN` if one moves.
